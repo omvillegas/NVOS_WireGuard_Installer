@@ -12,15 +12,28 @@ install_wireguard() {
 detect_network_config() {
     INTERFACE=$(ip route get 8.8.8.8 | awk '{print $5; exit}')
     SERVER_IP=$(curl -s https://api.ipify.org)
-    WG_PORT=$(shuf -i 10000-60000 -n 1)
+    if [[ -z "$SERVER_IP" ]]; then
+        print_message "$RED" "Failed to retrieve public IP."
+        exit 1
+    fi
+
+    # Generar un puerto aleatorio y verificar que no esté en uso
+    while true; do
+        WG_PORT=$(shuf -i 10000-60000 -n 1)
+        if ! ss -tunlp | grep -q ":$WG_PORT "; then
+            break
+        fi
+    done
+
     print_message "$GREEN" "Detected network interface: $INTERFACE"
     print_message "$GREEN" "Detected server IP: $SERVER_IP"
     print_message "$GREEN" "Generated WireGuard port: $WG_PORT"
 }
 
+
 backup_ufw_rules() {
     print_message "$YELLOW" "Backing up UFW rules..."
-    ufw status numbered > /etc/ufw/ufw.rules.backup
+    ufw status verbose > /etc/ufw/ufw.rules.backup
     print_message "$GREEN" "UFW rules backed up to /etc/ufw/ufw.rules.backup"
 }
 
@@ -53,7 +66,7 @@ EOF
 
 configure_ufw() {
     print_message "$YELLOW" "Configuring UFW..."
-    ufw allow $WG_PORT/udp
+    ufw allow "$WG_PORT"/udp
     ufw reload
     print_message "$GREEN" "UFW configured to allow WireGuard traffic."
 }
