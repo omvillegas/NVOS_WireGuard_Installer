@@ -2,23 +2,18 @@
 set -e
 trap 'print_message "$RED" "An error occurred. Exiting..."; exit 1' ERR
 
+# Definición de colores para mensajes
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# Definición de archivos de configuración y base de datos de usuarios
 LOG_FILE="/var/log/wireguard_manager.log"
 CONFIG_FILE="/etc/wireguard/wg_manager.conf"
 USER_DB="/etc/wireguard/users.json"
 
-# Import other scripts
-source ./network_config.sh
-source ./user_management.sh
-source ./monitoring_alerts.sh
-source ./backup_recovery.sh
-source ./system_management.sh
-
-# Logging
+# Función para imprimir mensajes con color y registrar en log
 print_message() {
     local color=$1
     local message=$2
@@ -26,7 +21,14 @@ print_message() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $message" >> "$LOG_FILE"
 }
 
-# Check users permissions
+# Importar otros scripts después de definir print_message
+source ./network_config.sh
+source ./user_management.sh
+source ./monitoring_alerts.sh
+source ./backup_recovery.sh
+source ./system_management.sh
+
+# Función para verificar si el script se está ejecutando como root
 check_root() {
     if [[ $EUID -ne 0 ]]; then
         print_message "$RED" "This script must be run as root"
@@ -34,26 +36,27 @@ check_root() {
     fi
 }
 
-# Handling dependencies
+# Función para manejar las dependencias necesarias
 check_dependencies() {
-    local deps=("wireguard" "ufw" "qrencode" "jq" "fail2ban" "curl" "prometheus-node-exporter" "ssmtp")
-    #local deps=("wireguard" "ufw" "qrencode" "jq" "fail2ban" "curl" "prometheus-node-exporter" "ssmtp" "column")
+    # Lista actualizada de dependencias necesarias
+    local deps=("wireguard" "ufw" "qrencode" "jq" "fail2ban" "curl" "ssmtp")
     local missing_deps=()
+    
     for dep in "${deps[@]}"; do
-        if ! command -v $dep &> /dev/null; then
-            missing_deps+=($dep)
+        if ! command -v "$dep" &> /dev/null; then
+            missing_deps+=("$dep")
         fi
     done
 
     if [ ${#missing_deps[@]} -ne 0 ]; then
         print_message "$YELLOW" "Installing missing dependencies: ${missing_deps[*]}"
-        apt update && apt install -y ${missing_deps[@]}
+        apt update && apt install -y "${missing_deps[@]}"
     else
         print_message "$GREEN" "All dependencies are installed."
     fi
 }
 
-# Main menu
+# Menú principal de gestión de WireGuard
 EXIT_MENU=false
 while [ "$EXIT_MENU" = false ]; do
     print_message "$YELLOW" "\nWireGuard Management Menu:"
@@ -100,7 +103,7 @@ while [ "$EXIT_MENU" = false ]; do
             list_users
             ;;
         6)
-            read -p "Enter username for generate QR code: " username
+            read -p "Enter username to generate QR code: " username
             generate_qr_code "$username"
             ;;
         7)
@@ -137,7 +140,7 @@ while [ "$EXIT_MENU" = false ]; do
             check_root
             uninstall_wireguard
             ;;
-	16)
+    	16)
             check_root
             check_wireguard_accessibility
             ;;
