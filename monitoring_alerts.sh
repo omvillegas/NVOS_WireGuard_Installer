@@ -146,8 +146,13 @@ check_wireguard_status() {
     echo "  Listening Port: $WG_PORT"
 }
 
-kcheck_wireguard_accessibility() {
-    print_message "$YELLOW" "Checking WireGuard accessibility..."
+check_wireguard_accessibility() {
+    local LINE_TOP="════════════════════════════════════════════════════════════"
+    local LINE_BOT="════════════════════════════════════════════════════════════"
+
+    print_message "$CYAN" "$LINE_TOP"
+    print_message "$CYAN" "              WIREGUARD ACCESSIBILITY CHECK"
+    print_message "$CYAN" "$LINE_TOP"
 
     local PUBLIC_IP
     local WG_PORT
@@ -164,11 +169,13 @@ kcheck_wireguard_accessibility() {
 
     if [ -z "$WG_PORT" ]; then
         print_message "$RED" "Unable to determine the WireGuard port."
+        print_message "$CYAN" "$LINE_BOT"
         return
     fi
 
-    print_message "$GREEN" "Public IP: $PUBLIC_IP"
-    print_message "$GREEN" "WireGuard Port (UDP): $WG_PORT"
+    print_message "$YELLOW" "Public IP: $PUBLIC_IP"
+    print_message "$YELLOW" "WireGuard Port (UDP): $WG_PORT"
+    print_message "$CYAN" "$LINE_TOP"
 
     if ss -lunp | grep -q ":$WG_PORT"; then
         WG_LISTENING=true
@@ -194,25 +201,24 @@ kcheck_wireguard_accessibility() {
         apt update && apt install -y netcat
     fi
 
+    print_message "$CYAN" "$LINE_TOP"
     if [ "$WG_LISTENING" = true ]; then
-        print_message "$YELLOW" "Attempting a UDP check on $PUBLIC_IP:$WG_PORT with 'nc -u -vz'..."
-        # Netcat in UDP mode often won't show 'open' unless the service sends a response
-        # WireGuard typically won't send a direct response to an empty UDP probe
-        # This check can result in a timeout, even if WireGuard is actually reachable.
-        if timeout 5 nc -u -vz "$PUBLIC_IP" "$WG_PORT" 2>&1 | grep -i -q 'open'; then
+        print_message "$YELLOW" "Attempting a UDP check on $PUBLIC_IP:$WG_PORT with: nc -u -vz"
+        if timeout 5 nc -u -vz "$PUBLIC_IP" "$WG_PORT" 2>&1 | grep -iq 'open'; then
             UDP_ACCESSIBLE=true
-            print_message "$GREEN" "✅ UDP port $WG_PORT appears open from the outside."
+            print_message "$GREEN" "✅ UDP port $WG_PORT appears open from the outside (netcat)."
         else
-            print_message "$RED" "❌ UDP port $WG_PORT did not respond to a netcat probe."
-            print_message "$YELLOW" "This does not necessarily mean it's blocked, because UDP services"
-            print_message "$YELLOW" "often do not respond to netcat scans unless they send a reply."
-            print_message "$YELLOW" "If you can connect to WireGuard from a remote client, it is working."
+            print_message "$RED" "❌ UDP port $WG_PORT did not respond to netcat."
+            print_message "$YELLOW" "WireGuard often does not reply to empty UDP probes."
+            print_message "$YELLOW" "If remote clients can connect, it's functioning correctly."
         fi
     else
-        print_message "$RED" "Skipping external connectivity check because WireGuard is not listening on UDP $WG_PORT locally."
+        print_message "$RED" "Skipping external connectivity check (WireGuard not listening)."
     fi
 
+    print_message "$CYAN" "$LINE_TOP"
     print_message "$YELLOW" "Summary of Results:"
+
     if [ "$WG_LISTENING" = true ]; then
         print_message "$GREEN" " • WireGuard is listening on UDP port $WG_PORT."
     else
@@ -229,12 +235,50 @@ kcheck_wireguard_accessibility() {
 
     if [ "$WG_LISTENING" = true ]; then
         if [ "$UDP_ACCESSIBLE" = true ]; then
-            print_message "$GREEN" " • UDP port $WG_PORT is likely reachable from the Internet (netcat test)."
+            print_message "$GREEN" " • Netcat suggests UDP port $WG_PORT is reachable."
         else
-            print_message "$RED" " • UDP port $WG_PORT did not respond to netcat; it may still be open if WireGuard clients can connect."
+            print_message "$RED" " • Netcat did NOT confirm UDP port $WG_PORT is open."
+            print_message "$RED" "   It may still be open if clients can connect."
         fi
     fi
 
-    print_message "$YELLOW" "Accessibility check completed."
-}
+    print_message "$CYAN" "$LINE_TOP"
+    print_message "$YELLOW" "Would you like to run an Nmap UDP scan on port $WG_PORT? (y/N)"
+    read -r user_choice
+    if [[ "$user_choice" =~ ^[Yy]$ ]]; then
+        if ! command -v nmap &>/dev/null; then
+            print_message "$RED" "Nmap is not installed. Installing..."
+            apt update && apt install -y nmap
+        fi
 
+        print_message "$YELLOW" "Starting Nmap UDP scan on $PUBLIC_IP:$WG_PORT..."
+
+        if [ "$(id -u)" -eq 0 ]; then
+            nmap -sU -p "$WG_PORT" "$PUBLIC_IP"
+        else
+            if command -v sudo &>/dev/null; then
+                if sudo -n true 2>/dev/null; then
+                    sudo nmap -sU -p "$WG_PORT" "$PUBLIC_IP"
+                else
+                    print_message "$YELLOW" "Sudo privileges are required for a more complete UDP scan. Continue? (y/N)"
+                    read -r sudo_choice
+                    if [[ "$sudo_choice" =~ ^[Yy]$ ]]; then
+                        sudo nmap -sU -p "$WG_PORT" "$PUBLIC_IP"
+                    else
+                        print_message "$RED" "Running Nmap without sudo. Results may be incomplete."
+                        nmap -sU -p "$WG_PORT" "$PUBLIC_IP"
+                    fi
+                fi
+            else
+                print_message "$RED" "sudo is not installed or unavailable. Running Nmap as current user."
+                nmap -sU -p "$WG_PORT" "$PUBLIC_IP"
+            fi
+        fi
+    else
+        print_message "$YELLOW" "Skipping Nmap UDP scan."
+    fi
+
+    print_message "$CYAN" "$LINE_BOT"
+    print_message "$CYAN" "           ACCESSIBILITY CHECK COMPLETED"
+    print_message "$CYAN" "$LINE_BOT"
+}
