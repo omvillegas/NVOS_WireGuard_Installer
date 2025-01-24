@@ -191,21 +191,5 @@ INTERFACE=$INTERFACE
 EOF
 
     systemctl enable wg-quick@wg0
-    print_message "$GREEN" "WireGuard is up and running."
-}
-
-configure_ufw() {
-    print_message "$YELLOW" "Configuring UFW..."
-    
-    # Source wg_manager.conf to access WG_PORT
-    if [[ -f /etc/wireguard/wg_manager.conf ]]; then
-        source /etc/wireguard/wg_manager.conf
-    else
-        print_message "$RED" "Error: wg_manager.conf not found. Cannot configure UFW."
-        exit 1
-    fi
-
-    ufw allow "$WG_PORT"/udp
-    ufw reload
-    print_message "$GREEN" "UFW configured to allow WireGuard traffic on port $WG_PORT/udp."
+    print_message "$GREEN" "WireGuard is up and running..."
 }
