@@ -2,9 +2,6 @@
 
 # Users manager script
 
-# Variables globales (asegúrate de que estas variables estén definidas en wireguard_manager.sh)
-# USER_DB, SERVER_PUBLIC_KEY, SERVER_IP, WG_PORT
-
 # Función para inicializar la base de datos de usuarios
 init_user_db() {
     if [[ ! -f "$USER_DB" ]]; then
@@ -73,13 +70,16 @@ generate_user_certificates() {
     mkdir -p /etc/wireguard/clients
     chmod 700 /etc/wireguard/clients
 
-    # Obtener variables necesarias desde la configuración
-    SERVER_PUBLIC_KEY=$(grep -i '^PublicKey' /etc/wireguard/wg0.conf | awk '{print $3}')
-    SERVER_IP=$(grep -i '^Endpoint' /etc/wireguard/clients/*.conf 2>/dev/null | awk -F':' '{print $1}' | head -n1)
-    WG_PORT=$(grep -i '^ListenPort' /etc/wireguard/wg0.conf | awk '{print $3}')
+    # Sourcear el archivo de configuración para obtener variables del servidor
+    if [[ -f "$CONFIG_FILE" ]]; then
+        source "$CONFIG_FILE"
+    else
+        print_message "$RED" "Configuration file $CONFIG_FILE not found."
+        return 1
+    fi
 
     if [[ -z "$SERVER_PUBLIC_KEY" || -z "$SERVER_IP" || -z "$WG_PORT" ]]; then
-        print_message "$RED" "Las variables de configuración del servidor no están correctamente establecidas."
+        print_message "$RED" "Server configuration variables are not properly set."
         return 1
     fi
 
@@ -190,23 +190,43 @@ remove_user_certificates() {
 
 # Función para listar usuarios actuales
 list_users() {
+    if [[ ! -f "$USER_DB" ]]; then
+        print_message "$YELLOW" "No user database found."
+        return
+    fi
+    if [[ $(jq 'length' "$USER_DB") -eq 0 ]]; then
+        print_message "$YELLOW" "No users found in the database."
+        return
+    fi
     print_message "$YELLOW" "Usuarios actuales de WireGuard:"
     jq -r 'to_entries[] | "\(.key) (\(.value.email))"' "$USER_DB"
 }
 
 # Función para generar código QR para un usuario
-generate_qr_code() {
+generate_qr_and_show_config() {
     local username=$1
     if [[ ! -f "/etc/wireguard/clients/$username.conf" ]]; then
         print_message "$RED" "No se encontró la configuración para el usuario $username."
         return 1
     fi
 
-    read -p "¿Deseas generar el código QR en la consola (1) o como archivo PNG (2)? [1/2]: " qr_option
-    if [[ "$qr_option" == "2" ]]; then
-        qrencode -o "/etc/wireguard/clients/$username.png" < "/etc/wireguard/clients/$username.conf"
-        print_message "$GREEN" "Código QR generado como /etc/wireguard/clients/$username.png"
-    else
-        qrencode -t ansiutf8 < "/etc/wireguard/clients/$username.conf"
-    fi
+    read -p "¿Deseas generar el código QR en la consola (1), como archivo PNG (2), o mostrar la configuración en pantalla (3)? [1/2/3]: " qr_option
+
+    case "$qr_option" in
+        1)
+            qrencode -t ansiutf8 < "/etc/wireguard/clients/$username.conf"
+            ;;
+        2)
+            qrencode -o "/etc/wireguard/clients/$username.png" < "/etc/wireguard/clients/$username.conf"
+            print_message "$GREEN" "Código QR generado como /etc/wireguard/clients/$username.png"
+            ;;
+        3)
+            print_message "$YELLOW" "Configuración del cliente $username:"
+            cat "/etc/wireguard/clients/$username.conf"
+            ;;
+        *)
+            print_message "$RED" "Opción inválida. Seleccionando la opción 1 por defecto."
+            qrencode -t ansiutf8 < "/etc/wireguard/clients/$username.conf"
+            ;;
+    esac
 }

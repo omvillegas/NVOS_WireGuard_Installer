@@ -103,12 +103,162 @@ change_wireguard_port() {
 }
 
 uninstall_wireguard() {
-    print_message "$YELLOW" "Uninstalling WireGuard..."
-    wg-quick down wg0 || true
-    systemctl disable wg-quick@wg0
-    ip link delete dev wg0 2>/dev/null || true
-    rm -rf /etc/wireguard
-    apt remove -y wireguard wireguard-dkms
+    print_message "$YELLOW" "Starting WireGuard uninstallation process..."
+
+    # Prompt for user confirmation
+    read -rp "Are you sure you want to uninstall WireGuard and remove all configurations? [y/N]: " confirm
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        print_message "$GREEN" "Uninstallation aborted by user."
+        return 0
+    fi
+
+    # Extract WG_PORT and INTERFACE from wg_manager.conf before removal
+    if [[ -f /etc/wireguard/wg_manager.conf ]]; then
+        source /etc/wireguard/wg_manager.conf
+    else
+        print_message "$YELLOW" "wg_manager.conf not found. Proceeding without port and interface information."
+        WG_PORT=""
+        INTERFACE=""
+    fi
+
+    # Stop and disable the WireGuard interface
+    if systemctl is-active --quiet wg-quick@wg0; then
+        print_message "$YELLOW" "Stopping WireGuard interface wg0..."
+        if ! wg-quick down wg0; then
+            print_message "$RED" "Warning: Failed to stop wg0 interface."
+        else
+            print_message "$GREEN" "WireGuard interface wg0 stopped."
+        fi
+    fi
+
+    print_message "$YELLOW" "Disabling WireGuard service..."
+    if systemctl is-enabled --quiet wg-quick@wg0; then
+        if ! systemctl disable wg-quick@wg0; then
+            print_message "$RED" "Warning: Failed to disable wg-quick@wg0 service."
+        else
+            print_message "$GREEN" "WireGuard service disabled."
+        fi
+    fi
+
+    # Remove WireGuard network interface if it exists
+    if ip link show wg0 &> /dev/null; then
+        print_message "$YELLOW" "Deleting WireGuard network interface wg0..."
+        if ! ip link delete dev wg0; then
+            print_message "$RED" "Warning: Failed to delete wg0 interface."
+        else
+            print_message "$GREEN" "WireGuard network interface wg0 deleted."
+        fi
+    else
+        print_message "$GREEN" "WireGuard network interface wg0 does not exist. Skipping."
+    fi
+
+    # Revert UFW rules related to WireGuard
+    if command -v ufw &> /dev/null && [[ -n "$WG_PORT" ]]; then
+        print_message "$YELLOW" "Reverting UFW rules related to WireGuard..."
+
+        # Remove WireGuard UDP port allowance
+        if ufw status | grep -q "$WG_PORT/udp"; then
+            ufw delete allow "$WG_PORT"/udp
+            print_message "$GREEN" "Removed UFW rule to allow port $WG_PORT/udp."
+        else
+            print_message "$GREEN" "No UFW rule found for port $WG_PORT/udp. Skipping."
+        fi
+    else
+        print_message "$YELLOW" "UFW is not installed or WG_PORT is undefined. Skipping UFW rules reversion."
+    fi
+
+    # Revert nftables rules related to WireGuard
+    if command -v nft &> /dev/null && [[ -n "$INTERFACE" ]]; then
+        print_message "$YELLOW" "Reverting nftables rules related to WireGuard..."
+
+        # Remove NAT masquerade rule
+        if nft list ruleset | grep -q "oif $INTERFACE masquerade"; then
+            nft delete rule ip nat POSTROUTING oif "$INTERFACE" masquerade
+            print_message "$GREEN" "Removed NAT masquerade rule for interface $INTERFACE."
+        else
+            print_message "$GREEN" "No NAT masquerade rule found for interface $INTERFACE. Skipping."
+        fi
+
+        # Remove WireGuard filter rules
+        if nft list tables | grep -q "inet wireguard"; then
+            nft delete chain inet wireguard FORWARD
+            nft delete table inet wireguard
+            print_message "$GREEN" "Removed inet wireguard table and FORWARD chain."
+        else
+            print_message "$GREEN" "No inet wireguard table found. Skipping."
+        fi
+    else
+        print_message "$YELLOW" "nftables is not installed or INTERFACE is undefined. Skipping nftables rules reversion."
+    fi
+
+    # Backup and remove WireGuard configuration files
+    if [[ -d /etc/wireguard ]]; then
+        print_message "$YELLOW" "Backing up existing WireGuard configurations..."
+        tar czf /etc/wireguard_backup_$(date +%F_%T).tar.gz /etc/wireguard
+        print_message "$GREEN" "WireGuard configurations backed up to /etc/wireguard_backup_$(date +%F_%T).tar.gz"
+
+        print_message "$YELLOW" "Removing WireGuard configuration files..."
+        if rm -rf /etc/wireguard; then
+            print_message "$GREEN" "WireGuard configuration files removed."
+        else
+            print_message "$RED" "Error: Failed to remove WireGuard configuration files."
+        fi
+    else
+        print_message "$GREEN" "/etc/wireguard directory does not exist. Skipping."
+    fi
+
+    # Purge WireGuard packages completely
+    print_message "$YELLOW" "Purging WireGuard packages..."
+    PACKAGES=("wireguard" "wireguard-tools")
+    for pkg in "${PACKAGES[@]}"; do
+        if dpkg -l | grep -qw "$pkg"; then
+            if apt purge -y "$pkg"; then
+                print_message "$GREEN" "Purged package: $pkg"
+            else
+                print_message "$RED" "Error: Failed to purge package: $pkg"
+            fi
+        else
+            print_message "$GREEN" "Package $pkg is not installed. Skipping."
+        fi
+    done
+
+    # Optionally, remove dependencies installed exclusively for WireGuard
+    # Caution: Ensure that these dependencies are not used by other services
+    print_message "$YELLOW" "Removing unused dependencies..."
     apt autoremove -y
-    print_message "$GREEN" "WireGuard uninstalled successfully."
+    print_message "$GREEN" "Unused dependencies removed."
+
+    # Remove WireGuard logs if any
+    LOG_FILES=("/var/log/wireguard.log" "/var/log/wg-access.log")
+    for log in "${LOG_FILES[@]}"; do
+        if [[ -f "$log" ]]; then
+            print_message "$YELLOW" "Removing log file: $log"
+            rm -f "$log"
+            print_message "$GREEN" "Log file $log removed."
+        else
+            print_message "$GREEN" "Log file $log does not exist. Skipping."
+        fi
+    done
+
+    # Remove any residual systemd service files
+    SERVICE_FILE="/etc/systemd/system/wg-quick@wg0.service"
+    if [[ -f "$SERVICE_FILE" ]]; then
+        print_message "$YELLOW" "Removing residual systemd service file..."
+        rm -f "$SERVICE_FILE"
+        systemctl daemon-reload
+        print_message "$GREEN" "Residual systemd service file removed and daemon reloaded."
+    else
+        print_message "$GREEN" "No residual systemd service file found. Skipping."
+    fi
+
+    # Remove WireGuard user database if exists
+    if [[ -f "$USER_DB" ]]; then
+        print_message "$YELLOW" "Removing WireGuard user database..."
+        rm -f "$USER_DB"
+        print_message "$GREEN" "WireGuard user database removed."
+    else
+        print_message "$GREEN" "WireGuard user database does not exist. Skipping."
+    fi
+
+    print_message "$GREEN" "WireGuard has been completely uninstalled and purged from the system."
 }

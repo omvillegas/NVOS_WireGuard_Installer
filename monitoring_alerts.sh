@@ -25,9 +25,13 @@ EOF
 show_usage_stats() {
     print_message "$YELLOW" "WireGuard Usage Statistics:"
     if command -v column &> /dev/null; then
-        wg show all dump | awk '{print $1,$6,$7}' | \
-            column -t -N "Peer,Received,Sent" | \
-            numfmt --to=iec --field=2,3
+        {
+            # Extract and print the header
+            echo -e "Peer\tReceived\tSent"
+            # Extract the data, format it, and apply numfmt
+            wg show all dump | awk '{print $1, $6, $7}' | \
+                numfmt --to=iec --field=2,3
+        } | column -t
     else
         wg show all dump | awk '{print $1 " Received:" $6 " Sent:" $7}'
     fi
@@ -36,20 +40,26 @@ show_usage_stats() {
 check_wireguard_status() {
     print_message "$YELLOW" "Checking WireGuard status..."
 
-    if systemctl is-active --quiet wg-quick@wg0; then
-        print_message "$GREEN" "WireGuard is active and running."
+    # Source wg_manager.conf to get necessary variables
+    if [[ -f /etc/wireguard/wg_manager.conf ]]; then
+        source /etc/wireguard/wg_manager.conf
+    else
+        print_message "$RED" "Error: wg_manager.conf not found. Cannot determine WireGuard status."
+        return 1
+    fi
+
+    # Check if the WireGuard interface is up
+    if ip link show wg0 up &> /dev/null; then
+        print_message "$GREEN" "WireGuard is running."
     else
         print_message "$RED" "WireGuard is not running."
     fi
 
-    local WG_PORT=$(wg show all listen-port | awk '{print $2}')
-    if [ -z "$WG_PORT" ]; then
-        WG_PORT=$(grep ListenPort /etc/wireguard/wg0.conf | awk '{print $3}')
-    fi
-
-    print_message "$YELLOW" "Current WireGuard port: $WG_PORT"
-
-    wg show
+    # Display current WireGuard configuration
+    echo "Current WireGuard port: $WG_PORT"
+    wg show wg0 public-key | awk '{print "Interface: wg0\n  Public Key:", $0}'
+    echo "  Private Key: (hidden)"
+    echo "  Listening Port: $WG_PORT"
 }
 
 check_wireguard_accessibility() {

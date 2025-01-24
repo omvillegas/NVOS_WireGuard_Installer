@@ -65,7 +65,7 @@ while [ "$EXIT_MENU" = false ]; do
     echo "3. Generate User Certificates"
     echo "4. Remove User Certificates"
     echo "5. List Current Users"
-    echo "6. Generate QR Code for User"
+    echo "6. Generate QR Code and show config for User"
     echo "7. Check WireGuard Status"
     echo "8. Show Usage Statistics"
     echo "9. Update System and WireGuard"
@@ -104,7 +104,7 @@ while [ "$EXIT_MENU" = false ]; do
             ;;
         6)
             read -p "Enter username to generate QR code: " username
-            generate_qr_code "$username"
+            generate_qr_and_show_config "$username"
             ;;
         7)
             check_wireguard_status
